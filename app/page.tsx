@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { User, isSignInWithEmailLink, onAuthStateChanged, sendSignInLinkToEmail, signInWithEmailLink, signOut } from "firebase/auth";
+import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { collection, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import Papa from "papaparse";
 import { auth, db } from "../lib/firebase";
@@ -31,35 +31,27 @@ export default function Home(){
   const [visitFilter,setVisitFilter]=useState<"all"|"pending"|"visited">("all"); const [selected,setSelected]=useState<School|null>(null);
   const [draft,setDraft]=useState<Visit>({visited:false,lastVisitedAt:"",notes:""}); const [saving,setSaving]=useState(false); const [menu,setMenu]=useState(false);
   const [authError,setAuthError]=useState("");
-  const [email,setEmail]=useState(PILOT_EMAIL); const [linkSent,setLinkSent]=useState(false);
+  const [email,setEmail]=useState(PILOT_EMAIL); const [password,setPassword]=useState("");
 
   const login = async () => {
     setAuthError("");
     const normalized=email.trim().toLowerCase();
     if(normalized!==PILOT_EMAIL){setAuthError("This email is not on the approved access list.");return}
-    try {
-      await sendSignInLinkToEmail(auth,normalized,{url:window.location.origin,handleCodeInApp:true});
-      window.localStorage.setItem("emailForSignIn",normalized); setLinkSent(true);
-    }
+    if(!password){setAuthError("Enter your MiamiSchools password.");return}
+    try { await signInWithEmailAndPassword(auth,normalized,password); setPassword(""); }
     catch (error:any) {
       const messages:Record<string,string>={
-        "auth/operation-not-allowed":"Passwordless email sign-in is not enabled in Firebase Authentication yet.",
-        "auth/unauthorized-domain":"This website domain is not authorized in Firebase Authentication.",
+        "auth/operation-not-allowed":"Email and password sign-in is not enabled in Firebase Authentication yet.",
         "auth/invalid-email":"Enter a valid email address.",
+        "auth/invalid-credential":"The email or password is incorrect.",
+        "auth/user-disabled":"This account has been disabled.",
         "auth/too-many-requests":"Too many attempts. Wait a moment and try again."
       };
-      setAuthError(messages[error?.code]||"We could not send the sign-in link. Please try again.");
+      setAuthError(messages[error?.code]||"We could not sign you in. Please try again.");
     }
   };
 
-  useEffect(()=>{
-    if(isSignInWithEmailLink(auth,window.location.href)){
-      const saved=window.localStorage.getItem("emailForSignIn")||window.prompt("Confirm the email that received this link:")||"";
-      if(saved.toLowerCase()===PILOT_EMAIL) signInWithEmailLink(auth,saved,window.location.href).then(()=>{window.localStorage.removeItem("emailForSignIn");window.history.replaceState({},document.title,window.location.origin)}).catch(()=>setAuthError("This sign-in link is invalid or has expired."));
-      else setAuthError("This email is not on the approved access list.");
-    }
-    return onAuthStateChanged(auth,next=>{if(next?.email?.toLowerCase()!==PILOT_EMAIL){if(next)signOut(auth);setUser(null)}else setUser(next)});
-  },[]);
+  useEffect(()=>onAuthStateChanged(auth,next=>{if(next?.email?.toLowerCase()!==PILOT_EMAIL){if(next)signOut(auth);setUser(null)}else setUser(next)}),[]);
   useEffect(()=>{ fetch("/schools.csv").then(r=>r.text()).then(csv=>{ const parsed=Papa.parse<Record<string,string>>(csv,{header:true,skipEmptyLines:true,transformHeader:h=>h.trim().replace(/^\uFEFF/,"")}); const data=parsed.data.map((r,i)=>{const latitude=Number(r.latitude),longitude=Number(r.longitude); if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return null; const k=classify(r); const key=`${r.id||i}-${latitude.toFixed(5)}-${longitude.toFixed(5)}`.replace(/[^a-zA-Z0-9_-]/g,"_"); return {...r,key,latitude,longitude,kind:k,search:[r.name,r.address,r.city,r.zipcode,r.grades,r.type].join(" ").toLowerCase()} as School}).filter(Boolean) as School[]; setSchools(data)}) },[]);
   useEffect(()=>{if(!user){setVisits({});return} return onSnapshot(collection(db,"users",user.uid,"schoolVisits"),s=>{const n:Record<string,Visit>={};s.forEach(d=>n[d.id]=d.data() as Visit);setVisits(n)})},[user]);
 
@@ -82,8 +74,7 @@ export default function Home(){
     <aside className={`map-sidebar ${menu?"open":""}`}>
       <header className="brand-row"><span className="brandmark">MS</span><div><p className="eyebrow">MIAMI-DADE COUNTY</p><h1>Miami Schools</h1></div></header>
       <p className="intro">Find public schools, plan your route, and keep track of every visit.</p>
-      <div className="auth-row">{user?<><div className="signed"><b>{user.email}</b><small>Tracking synchronized</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Sign out</button></>:<div className="email-login"><label htmlFor="loginEmail">Approved work email</label><input id="loginEmail" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email"/><button className="primary full" onClick={login}>Email me a sign-in link</button></div>}</div>
-      {linkSent&&<p className="auth-success" role="status">Check your inbox. We sent you a one-time sign-in link.</p>}
+      <div className="auth-row">{user?<><div className="signed"><b>{user.email}</b><small>Tracking synchronized</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Sign out</button></>:<div className="email-login"><label htmlFor="loginEmail">Approved work email</label><input id="loginEmail" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email"/><label htmlFor="loginPassword">MiamiSchools password</label><input id="loginPassword" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" onKeyDown={e=>{if(e.key==="Enter")login()}}/><button className="primary full" onClick={login}>Sign in</button></div>}</div>
       {authError&&<p className="auth-error" role="alert">{authError}</p>}
       <label className="field-label">Search schools</label><div className="map-search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name, address, or ZIP…"/><button onClick={()=>setQuery("")}>×</button></div>
       <div className="filter-title"><span>School type</span><button className="text-btn" onClick={()=>{setKind("all");setVisitFilter("all");setQuery("")}}>Reset</button></div>
