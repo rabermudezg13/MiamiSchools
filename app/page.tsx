@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import Papa from "papaparse";
 import { auth, db } from "../lib/firebase";
 import "leaflet/dist/leaflet.css";
@@ -22,7 +22,8 @@ const classify = (r:Record<string,string>):Kind => {
   return "other";
 };
 const ago = (date?:string) => date ? Math.max(0, Math.floor((Date.now()-new Date(`${date}T12:00:00`).getTime())/86400000)) : null;
-const PILOT_EMAIL = "rodrigo.bermudez@kellyeducation.com";
+const ADMIN_EMAIL = "rodrigo.bermudez@kellyeducation.com";
+const APPROVED_EMAILS = new Set([ADMIN_EMAIL,"angie.miller@kellyeducation.com","anthony.morales@kellyeducation.com"]);
 
 export default function Home(){
   const mapNode = useRef<HTMLDivElement>(null); const mapState = useRef<any>(null);
@@ -31,12 +32,12 @@ export default function Home(){
   const [visitFilter,setVisitFilter]=useState<"all"|"pending"|"visited">("all"); const [selected,setSelected]=useState<School|null>(null);
   const [draft,setDraft]=useState<Visit>({visited:false,lastVisitedAt:"",notes:""}); const [saving,setSaving]=useState(false); const [menu,setMenu]=useState(false);
   const [authError,setAuthError]=useState("");
-  const [email,setEmail]=useState(PILOT_EMAIL); const [password,setPassword]=useState("");
+  const [email,setEmail]=useState(ADMIN_EMAIL); const [password,setPassword]=useState("");
 
   const login = async () => {
     setAuthError("");
     const normalized=email.trim().toLowerCase();
-    if(normalized!==PILOT_EMAIL){setAuthError("This email is not on the approved access list.");return}
+    if(!APPROVED_EMAILS.has(normalized)){setAuthError("This email is not on the approved access list.");return}
     if(!password){setAuthError("Enter your MiamiSchools password.");return}
     try { await signInWithEmailAndPassword(auth,normalized,password); setPassword(""); }
     catch (error:any) {
@@ -51,9 +52,10 @@ export default function Home(){
     }
   };
 
-  useEffect(()=>onAuthStateChanged(auth,next=>{if(next?.email?.toLowerCase()!==PILOT_EMAIL){if(next)signOut(auth);setUser(null)}else setUser(next)}),[]);
+  useEffect(()=>onAuthStateChanged(auth,next=>{if(next&&!APPROVED_EMAILS.has(next.email?.toLowerCase()||"")){signOut(auth);setUser(null)}else setUser(next)}),[]);
   useEffect(()=>{ fetch("/schools.csv").then(r=>r.text()).then(csv=>{ const parsed=Papa.parse<Record<string,string>>(csv,{header:true,skipEmptyLines:true,transformHeader:h=>h.trim().replace(/^\uFEFF/,"")}); const data=parsed.data.map((r,i)=>{const latitude=Number(r.latitude),longitude=Number(r.longitude); if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return null; const k=classify(r); const key=`${r.id||i}-${latitude.toFixed(5)}-${longitude.toFixed(5)}`.replace(/[^a-zA-Z0-9_-]/g,"_"); return {...r,key,latitude,longitude,kind:k,search:[r.name,r.address,r.city,r.zipcode,r.grades,r.type].join(" ").toLowerCase()} as School}).filter(Boolean) as School[]; setSchools(data)}) },[]);
-  useEffect(()=>{if(!user){setVisits({});return} return onSnapshot(collection(db,"users",user.uid,"schoolVisits"),s=>{const n:Record<string,Visit>={};s.forEach(d=>n[d.id]=d.data() as Visit);setVisits(n)})},[user]);
+  useEffect(()=>{if(!user){setVisits({});return} return onSnapshot(collection(db,"sharedVisits"),s=>{const n:Record<string,Visit>={};s.forEach(d=>n[d.id]=d.data() as Visit);setVisits(n)},()=>setAuthError("Your account does not have permission to view visits."))},[user]);
+  useEffect(()=>{if(user?.email?.toLowerCase()!==ADMIN_EMAIL)return;(async()=>{const legacy=await getDocs(collection(db,"users",user.uid,"schoolVisits"));for(const old of legacy.docs)await setDoc(doc(db,"sharedVisits",old.id),old.data(),{merge:true})})().catch(()=>{})},[user]);
 
   const visible=useMemo(()=>schools.filter(s=>(kind==="all"||s.kind===kind)&&(!query||s.search.includes(query.toLowerCase()))&&(visitFilter==="all"||(visitFilter==="visited"?visits[s.key]?.visited:!visits[s.key]?.visited))),[schools,kind,query,visitFilter,visits]);
   const open=(s:School)=>{setSelected(s);setDraft(visits[s.key]||{visited:false,lastVisitedAt:"",notes:""})};
@@ -67,15 +69,15 @@ export default function Home(){
   })();return()=>{cancelled=true}},[schools,visible,visits,user]);
 
   const locate=()=>navigator.geolocation?.getCurrentPosition(({coords})=>{const {map,L}=mapState.current||{};if(!map)return;L.circleMarker([coords.latitude,coords.longitude],{radius:9,weight:4,color:"#fff",fillColor:"#14261f",fillOpacity:1}).addTo(map).bindPopup("Your location").openPopup();map.setView([coords.latitude,coords.longitude],13)},()=>alert("We could not get your location. Check your browser permission."),{enableHighAccuracy:true,timeout:10000});
-  const save=async()=>{if(!user||!selected)return;setSaving(true);await setDoc(doc(db,"users",user.uid,"schoolVisits",selected.key),{...draft,schoolName:selected.name,schoolId:selected.id,updatedAt:serverTimestamp()},{merge:true});setSaving(false);setSelected(null)};
-  const removeVisit=async()=>{if(!user||!selected||!visits[selected.key])return;if(!window.confirm(`Delete the visit record for ${selected.name}? This will remove its date and notes.`))return;setSaving(true);await deleteDoc(doc(db,"users",user.uid,"schoolVisits",selected.key));setSaving(false);setSelected(null)};
+  const save=async()=>{if(!user||user.email?.toLowerCase()!==ADMIN_EMAIL||!selected)return;setSaving(true);await setDoc(doc(db,"sharedVisits",selected.key),{...draft,schoolName:selected.name,schoolId:selected.id,updatedBy:user.email,updatedAt:serverTimestamp()},{merge:true});setSaving(false);setSelected(null)};
+  const removeVisit=async()=>{if(!user||user.email?.toLowerCase()!==ADMIN_EMAIL||!selected||!visits[selected.key])return;if(!window.confirm(`Delete the visit record for ${selected.name}? This will remove its date and notes.`))return;setSaving(true);await deleteDoc(doc(db,"sharedVisits",selected.key));setSaving(false);setSelected(null)};
   const visited=schools.filter(s=>visits[s.key]?.visited).length;
 
   return <main className="map-app">
     <aside className={`map-sidebar ${menu?"open":""}`}>
       <header className="brand-row"><span className="brandmark">MS</span><div><p className="eyebrow">MIAMI-DADE COUNTY</p><h1>Miami Schools</h1></div></header>
       <p className="intro">Find public schools, plan your route, and keep track of every visit.</p>
-      <div className="auth-row">{user?<><div className="signed"><b>{user.email}</b><small>Tracking synchronized</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Sign out</button></>:<div className="email-login"><label htmlFor="loginEmail">Approved work email</label><input id="loginEmail" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email"/><label htmlFor="loginPassword">MiamiSchools password</label><input id="loginPassword" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" onKeyDown={e=>{if(e.key==="Enter")login()}}/><button className="primary full" onClick={login}>Sign in</button></div>}</div>
+      <div className="auth-row">{user?<><div className="signed"><b>{user.email}</b><small>{user.email?.toLowerCase()===ADMIN_EMAIL?"Administrator":"View only"}</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Sign out</button></>:<div className="email-login"><label htmlFor="loginEmail">Approved work email</label><input id="loginEmail" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email"/><label htmlFor="loginPassword">MiamiSchools password</label><input id="loginPassword" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" onKeyDown={e=>{if(e.key==="Enter")login()}}/><button className="primary full" onClick={login}>Sign in</button></div>}</div>
       {authError&&<p className="auth-error" role="alert">{authError}</p>}
       <label className="field-label">Search schools</label><div className="map-search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name, address, or ZIP…"/><button onClick={()=>setQuery("")}>×</button></div>
       <div className="filter-title"><span>School type</span><button className="text-btn" onClick={()=>{setKind("all");setVisitFilter("all");setQuery("")}}>Reset</button></div>
@@ -86,6 +88,6 @@ export default function Home(){
       <footer>Directory imported from MiamiSchoolsMap.<br/>Map © OpenStreetMap contributors.</footer>
     </aside>
     <section className="map-panel"><div ref={mapNode} id="map"/><button className="mobile-menu" onClick={()=>setMenu(!menu)}>☰ Filters</button><div className="map-legend"><span><i className="elementary"/>Elementary</span><span><i className="middle"/>Middle</span><span><i className="high"/>High</span><span><i className="k8"/>K–8</span><span><i className="visited"/>Visited</span></div></section>
-    {selected&&<div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><form className="modal" onSubmit={e=>{e.preventDefault();save()}}><button type="button" className="close" onClick={()=>setSelected(null)}>×</button><p className="eyebrow">FIELD VISIT</p><h2>{selected.name}</h2><p className="modalAddress">{selected.address}, {selected.city}</p><label className="check"><input type="checkbox" checked={draft.visited} onChange={e=>setDraft({...draft,visited:e.target.checked})}/><span>This school has been visited</span></label><label>Visit date<input type="date" max={new Date().toISOString().slice(0,10)} value={draft.lastVisitedAt||""} onChange={e=>setDraft({...draft,lastVisitedAt:e.target.value,visited:Boolean(e.target.value)})}/></label><label>Notes and next steps<textarea rows={5} value={draft.notes||""} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="E.g. Send proposal, call the principal..."/></label><div className="modalActions">{visits[selected.key]&&<button type="button" className="danger" onClick={removeVisit} disabled={saving}>Delete visit</button>}<span className="action-spacer"/><button type="button" className="secondary" onClick={()=>setSelected(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?"Saving...":"Save visit"}</button></div></form></div>}
+    {selected&&<div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><form className="modal" onSubmit={e=>{e.preventDefault();save()}}><button type="button" className="close" onClick={()=>setSelected(null)}>×</button><p className="eyebrow">FIELD VISIT</p><h2>{selected.name}</h2><p className="modalAddress">{selected.address}, {selected.city}</p><label className="check"><input type="checkbox" disabled={user?.email?.toLowerCase()!==ADMIN_EMAIL} checked={draft.visited} onChange={e=>setDraft({...draft,visited:e.target.checked})}/><span>This school has been visited</span></label><label>Visit date<input type="date" disabled={user?.email?.toLowerCase()!==ADMIN_EMAIL} max={new Date().toISOString().slice(0,10)} value={draft.lastVisitedAt||""} onChange={e=>setDraft({...draft,lastVisitedAt:e.target.value,visited:Boolean(e.target.value)})}/></label><label>Notes and next steps<textarea rows={5} readOnly={user?.email?.toLowerCase()!==ADMIN_EMAIL} value={draft.notes||""} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="E.g. Send proposal, call the principal..."/></label><div className="modalActions">{visits[selected.key]&&user?.email?.toLowerCase()===ADMIN_EMAIL&&<button type="button" className="danger" onClick={removeVisit} disabled={saving}>Delete visit</button>}<span className="action-spacer"/><button type="button" className="secondary" onClick={()=>setSelected(null)}>Close</button>{user?.email?.toLowerCase()===ADMIN_EMAIL&&<button className="primary" disabled={saving}>{saving?"Saving...":"Save visit"}</button>}</div></form></div>}
   </main>
 }
