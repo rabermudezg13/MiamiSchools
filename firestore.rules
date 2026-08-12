@@ -2,14 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isApproved() {
-      return request.auth != null && request.auth.token.email in [
+      return request.auth != null && request.auth.token.email.lower() in [
         'rodrigo.bermudez@kellyeducation.com',
         'angie.miller@kellyeducation.com',
         'anthony.morales@kellyeducation.com'
       ];
     }
     function isAdmin() {
-      return request.auth != null && request.auth.token.email == 'rodrigo.bermudez@kellyeducation.com';
+      return request.auth != null && request.auth.token.email.lower() == 'rodrigo.bermudez@kellyeducation.com';
     }
     match /sharedVisits/{visitId} {
       allow read: if isApproved();
