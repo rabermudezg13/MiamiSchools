@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { collection, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import Papa from "papaparse";
 import { auth, db } from "../lib/firebase";
 import "leaflet/dist/leaflet.css";
@@ -68,6 +68,7 @@ export default function Home(){
 
   const locate=()=>navigator.geolocation?.getCurrentPosition(({coords})=>{const {map,L}=mapState.current||{};if(!map)return;L.circleMarker([coords.latitude,coords.longitude],{radius:9,weight:4,color:"#fff",fillColor:"#14261f",fillOpacity:1}).addTo(map).bindPopup("Your location").openPopup();map.setView([coords.latitude,coords.longitude],13)},()=>alert("We could not get your location. Check your browser permission."),{enableHighAccuracy:true,timeout:10000});
   const save=async()=>{if(!user||!selected)return;setSaving(true);await setDoc(doc(db,"users",user.uid,"schoolVisits",selected.key),{...draft,schoolName:selected.name,schoolId:selected.id,updatedAt:serverTimestamp()},{merge:true});setSaving(false);setSelected(null)};
+  const removeVisit=async()=>{if(!user||!selected||!visits[selected.key])return;if(!window.confirm(`Delete the visit record for ${selected.name}? This will remove its date and notes.`))return;setSaving(true);await deleteDoc(doc(db,"users",user.uid,"schoolVisits",selected.key));setSaving(false);setSelected(null)};
   const visited=schools.filter(s=>visits[s.key]?.visited).length;
 
   return <main className="map-app">
@@ -85,6 +86,6 @@ export default function Home(){
       <footer>Directory imported from MiamiSchoolsMap.<br/>Map © OpenStreetMap contributors.</footer>
     </aside>
     <section className="map-panel"><div ref={mapNode} id="map"/><button className="mobile-menu" onClick={()=>setMenu(!menu)}>☰ Filters</button><div className="map-legend"><span><i className="elementary"/>Elementary</span><span><i className="middle"/>Middle</span><span><i className="high"/>High</span><span><i className="k8"/>K–8</span><span><i className="visited"/>Visited</span></div></section>
-    {selected&&<div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><form className="modal" onSubmit={e=>{e.preventDefault();save()}}><button type="button" className="close" onClick={()=>setSelected(null)}>×</button><p className="eyebrow">FIELD VISIT</p><h2>{selected.name}</h2><p className="modalAddress">{selected.address}, {selected.city}</p><label className="check"><input type="checkbox" checked={draft.visited} onChange={e=>setDraft({...draft,visited:e.target.checked})}/><span>This school has been visited</span></label><label>Visit date<input type="date" max={new Date().toISOString().slice(0,10)} value={draft.lastVisitedAt||""} onChange={e=>setDraft({...draft,lastVisitedAt:e.target.value,visited:Boolean(e.target.value)})}/></label><label>Notes and next steps<textarea rows={5} value={draft.notes||""} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="E.g. Send proposal, call the principal..."/></label><div className="modalActions"><button type="button" className="secondary" onClick={()=>setSelected(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?"Saving...":"Save visit"}</button></div></form></div>}
+    {selected&&<div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><form className="modal" onSubmit={e=>{e.preventDefault();save()}}><button type="button" className="close" onClick={()=>setSelected(null)}>×</button><p className="eyebrow">FIELD VISIT</p><h2>{selected.name}</h2><p className="modalAddress">{selected.address}, {selected.city}</p><label className="check"><input type="checkbox" checked={draft.visited} onChange={e=>setDraft({...draft,visited:e.target.checked})}/><span>This school has been visited</span></label><label>Visit date<input type="date" max={new Date().toISOString().slice(0,10)} value={draft.lastVisitedAt||""} onChange={e=>setDraft({...draft,lastVisitedAt:e.target.value,visited:Boolean(e.target.value)})}/></label><label>Notes and next steps<textarea rows={5} value={draft.notes||""} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="E.g. Send proposal, call the principal..."/></label><div className="modalActions">{visits[selected.key]&&<button type="button" className="danger" onClick={removeVisit} disabled={saving}>Delete visit</button>}<span className="action-spacer"/><button type="button" className="secondary" onClick={()=>setSelected(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?"Saving...":"Save visit"}</button></div></form></div>}
   </main>
 }
