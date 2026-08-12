@@ -13,7 +13,8 @@ service cloud.firestore {
     }
     match /sharedVisits/{visitId} {
       allow read: if isApproved();
-      allow create, update, delete: if isAdmin();
+      allow create, update: if isApproved();
+      allow delete: if isAdmin();
     }
     match /users/{userId}/{document=**} {
       allow read: if isAdmin() && request.auth.uid == userId;
