@@ -29,6 +29,21 @@ export default function Home(){
   const [user,setUser]=useState<User|null>(null); const [query,setQuery]=useState(""); const [kind,setKind]=useState<Kind|"all">("all");
   const [visitFilter,setVisitFilter]=useState<"all"|"pending"|"visited">("all"); const [selected,setSelected]=useState<School|null>(null);
   const [draft,setDraft]=useState<Visit>({visited:false,lastVisitedAt:"",notes:""}); const [saving,setSaving]=useState(false); const [menu,setMenu]=useState(false);
+  const [authError,setAuthError]=useState("");
+
+  const login = async () => {
+    setAuthError("");
+    try { await signInWithPopup(auth,new GoogleAuthProvider()); }
+    catch (error:any) {
+      const messages:Record<string,string>={
+        "auth/operation-not-allowed":"Google Sign-In is not enabled in Firebase Authentication yet.",
+        "auth/unauthorized-domain":"This website domain is not authorized in Firebase Authentication.",
+        "auth/popup-blocked":"Your browser blocked the sign-in window. Allow popups and try again.",
+        "auth/popup-closed-by-user":"Sign-in was canceled before it was completed."
+      };
+      setAuthError(messages[error?.code]||"We could not sign you in. Please try again.");
+    }
+  };
 
   useEffect(()=>onAuthStateChanged(auth,setUser),[]);
   useEffect(()=>{ fetch("/schools.csv").then(r=>r.text()).then(csv=>{ const parsed=Papa.parse<Record<string,string>>(csv,{header:true,skipEmptyLines:true,transformHeader:h=>h.trim().replace(/^\uFEFF/,"")}); const data=parsed.data.map((r,i)=>{const latitude=Number(r.latitude),longitude=Number(r.longitude); if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return null; const k=classify(r); const key=`${r.id||i}-${latitude.toFixed(5)}-${longitude.toFixed(5)}`.replace(/[^a-zA-Z0-9_-]/g,"_"); return {...r,key,latitude,longitude,kind:k,search:[r.name,r.address,r.city,r.zipcode,r.grades,r.type].join(" ").toLowerCase()} as School}).filter(Boolean) as School[]; setSchools(data)}) },[]);
@@ -42,7 +57,7 @@ export default function Home(){
     if(!mapState.current){const map=L.map(mapNode.current!,{zoomControl:false}).setView([25.7617,-80.35],10);L.control.zoom({position:"topright"}).addTo(map);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap contributors"}).addTo(map);mapState.current={map,cluster:(L as any).markerClusterGroup({showCoverageOnHover:false,maxClusterRadius:48}),L};map.addLayer(mapState.current.cluster)}
     const {map,cluster}=mapState.current;cluster.clearLayers();
     const labels={elementary:"E",middle:"M",high:"H",k8:"K",other:"S"};
-    visible.forEach(s=>{const done=visits[s.key]?.visited;const icon=L.divIcon({className:"",html:`<div class="school-marker ${s.kind} ${done?"visited":""}">${done?"✓":labels[s.kind]}</div>`,iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-15]}); const marker=L.marker([s.latitude,s.longitude],{icon,title:s.name});const days=ago(visits[s.key]?.lastVisitedAt);const address=`${s.address}, ${s.city}, ${s.state} ${s.zipcode}`;const popup=document.createElement("div");popup.className="popup";popup.innerHTML=`<span class="popup-type">${s.grades?`GRADES ${s.grades}`:s.type}</span><h3>${s.name}</h3><p>📍 ${address}</p>${s.phone?`<p>☎ <a href="tel:${s.phone}">${s.phone}</a></p>`:""}${done?`<p class="visit-line">✓ Visited ${days===0?"today":`${days} days ago`}</p>`:""}<div class="popup-actions"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}">Directions ↗</a><button>${done?"Update":"Log visit"}</button></div>`;popup.querySelector("button")?.addEventListener("click",()=>user?open(s):signInWithPopup(auth,new GoogleAuthProvider()));marker.bindPopup(popup);cluster.addLayer(marker)});
+    visible.forEach(s=>{const done=visits[s.key]?.visited;const icon=L.divIcon({className:"",html:`<div class="school-marker ${s.kind} ${done?"visited":""}">${done?"✓":labels[s.kind]}</div>`,iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-15]}); const marker=L.marker([s.latitude,s.longitude],{icon,title:s.name});const days=ago(visits[s.key]?.lastVisitedAt);const address=`${s.address}, ${s.city}, ${s.state} ${s.zipcode}`;const popup=document.createElement("div");popup.className="popup";popup.innerHTML=`<span class="popup-type">${s.grades?`GRADES ${s.grades}`:s.type}</span><h3>${s.name}</h3><p>📍 ${address}</p>${s.phone?`<p>☎ <a href="tel:${s.phone}">${s.phone}</a></p>`:""}${done?`<p class="visit-line">✓ Visited ${days===0?"today":`${days} days ago`}</p>`:""}<div class="popup-actions"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}">Directions ↗</a><button>${done?"Update":"Log visit"}</button></div>`;popup.querySelector("button")?.addEventListener("click",()=>user?open(s):login());marker.bindPopup(popup);cluster.addLayer(marker)});
   })();return()=>{cancelled=true}},[schools,visible,visits,user]);
 
   const locate=()=>navigator.geolocation?.getCurrentPosition(({coords})=>{const {map,L}=mapState.current||{};if(!map)return;L.circleMarker([coords.latitude,coords.longitude],{radius:9,weight:4,color:"#fff",fillColor:"#14261f",fillOpacity:1}).addTo(map).bindPopup("Your location").openPopup();map.setView([coords.latitude,coords.longitude],13)},()=>alert("We could not get your location. Check your browser permission."),{enableHighAccuracy:true,timeout:10000});
@@ -53,7 +68,8 @@ export default function Home(){
     <aside className={`map-sidebar ${menu?"open":""}`}>
       <header className="brand-row"><span className="brandmark">MS</span><div><p className="eyebrow">MIAMI-DADE COUNTY</p><h1>Miami Schools</h1></div></header>
       <p className="intro">Find public schools, plan your route, and keep track of every visit.</p>
-      <div className="auth-row">{user?<><div className="signed"><b>{user.displayName||"User"}</b><small>Tracking synchronized</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Sign out</button></>:<button className="primary full" onClick={()=>signInWithPopup(auth,new GoogleAuthProvider())}>Continue with Google</button>}</div>
+      <div className="auth-row">{user?<><div className="signed"><b>{user.displayName||"User"}</b><small>Tracking synchronized</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Sign out</button></>:<button className="primary full" onClick={login}>Continue with Google</button>}</div>
+      {authError&&<p className="auth-error" role="alert">{authError}</p>}
       <label className="field-label">Search schools</label><div className="map-search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name, address, or ZIP…"/><button onClick={()=>setQuery("")}>×</button></div>
       <div className="filter-title"><span>School type</span><button className="text-btn" onClick={()=>{setKind("all");setVisitFilter("all");setQuery("")}}>Reset</button></div>
       <div className="filter-grid">{([['all','All'],['elementary','Elementary'],['middle','Middle'],['high','High'],['k8','K–8'],['other','Other']] as const).map(([k,n])=><button key={k} className={kind===k?"active":""} onClick={()=>setKind(k)}>{n}</button>)}</div>
