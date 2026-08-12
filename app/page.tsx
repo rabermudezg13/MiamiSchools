@@ -1,109 +1,68 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, User, onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { collection, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import Papa from "papaparse";
 import { auth, db } from "../lib/firebase";
+import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 
-type School = { id: string; name: string; type: "Elementary" | "K-8" | "Middle" | "High"; city: string; address: string; region: "North" | "Central" | "South" };
-type Visit = { visited: boolean; lastVisitedAt?: string; notes?: string };
+type Kind = "elementary" | "middle" | "high" | "k8" | "other";
+type School = { key:string; id:string; name:string; address:string; city:string; state:string; zipcode:string; phone:string; type:string; grades:string; latitude:number; longitude:number; kind:Kind; search:string };
+type Visit = { visited:boolean; lastVisitedAt?:string; notes?:string };
 
-const schools: School[] = [
-  { id:"coral-gables-senior", name:"Coral Gables Senior High School", type:"High", city:"Coral Gables", address:"450 Bird Rd, Coral Gables, FL 33146", region:"Central" },
-  { id:"coral-reef-senior", name:"Coral Reef Senior High School", type:"High", city:"Miami", address:"10101 SW 152nd St, Miami, FL 33157", region:"South" },
-  { id:"miami-beach-senior", name:"Miami Beach Senior High School", type:"High", city:"Miami Beach", address:"2231 Prairie Ave, Miami Beach, FL 33139", region:"Central" },
-  { id:"miami-senior", name:"Miami Senior High School", type:"High", city:"Miami", address:"2450 SW 1st St, Miami, FL 33135", region:"Central" },
-  { id:"north-miami-senior", name:"North Miami Senior High School", type:"High", city:"North Miami", address:"13110 NE 8th Ave, North Miami, FL 33161", region:"North" },
-  { id:"john-ferguson", name:"John A. Ferguson Senior High School", type:"High", city:"Miami", address:"15900 SW 56th St, Miami, FL 33185", region:"South" },
-  { id:"southwest-miami", name:"Southwest Miami Senior High School", type:"High", city:"Miami", address:"8855 SW 50th Terrace, Miami, FL 33165", region:"South" },
-  { id:"mast-academy", name:"MAST Academy", type:"High", city:"Key Biscayne", address:"3979 Rickenbacker Cswy, Miami, FL 33149", region:"Central" },
-  { id:"george-carver-middle", name:"George W. Carver Middle School", type:"Middle", city:"Miami", address:"4901 Lincoln Dr, Miami, FL 33133", region:"Central" },
-  { id:"north-dade-middle", name:"North Dade Middle School", type:"Middle", city:"Miami Gardens", address:"1840 NW 157th St, Miami Gardens, FL 33054", region:"North" },
-  { id:"south-miami-middle", name:"South Miami Middle School", type:"Middle", city:"South Miami", address:"6750 SW 60th St, South Miami, FL 33143", region:"South" },
-  { id:"ada-merritt", name:"Ada Merritt K-8 Center", type:"K-8", city:"Miami", address:"660 SW 3rd St, Miami, FL 33130", region:"Central" },
-  { id:"coral-way-k8", name:"Coral Way K-8 Center", type:"K-8", city:"Miami", address:"1950 SW 13th Ave, Miami, FL 33145", region:"Central" },
-  { id:"citrus-grove-k8", name:"Citrus Grove K-8 Center", type:"K-8", city:"Miami", address:"2121 NW 5th St, Miami, FL 33125", region:"Central" },
-  { id:"frances-tucker", name:"Frances S. Tucker K-8 Center", type:"K-8", city:"Miami", address:"3500 Douglas Rd, Miami, FL 33133", region:"Central" },
-  { id:"shenandoah-elementary", name:"Shenandoah Elementary School", type:"Elementary", city:"Miami", address:"1023 SW 21st Ave, Miami, FL 33135", region:"Central" },
-  { id:"sunset-elementary", name:"Sunset Elementary School", type:"Elementary", city:"Miami", address:"5120 SW 72nd St, Miami, FL 33143", region:"South" },
-  { id:"north-hialeah-elementary", name:"North Hialeah Elementary School", type:"Elementary", city:"Hialeah", address:"4251 E 5th Ave, Hialeah, FL 33013", region:"North" },
-];
+const classify = (r:Record<string,string>):Kind => {
+  const text = `${r.type||""} ${r.grades||""} ${r.name||""}`.toLowerCase();
+  if (/k[-– ]?8|pk[-– ]?8/.test(text)) return "k8";
+  if (/elementary|elem|primary|^e$/.test(text)) return "elementary";
+  if (/middle|junior|^m$/.test(text)) return "middle";
+  if (/senior high|high school|\bhigh\b|^s$|^sr$/.test(text)) return "high";
+  return "other";
+};
+const ago = (date?:string) => date ? Math.max(0, Math.floor((Date.now()-new Date(`${date}T12:00:00`).getTime())/86400000)) : null;
 
-const daysAgo = (date?: string) => date ? Math.max(0, Math.floor((Date.now() - new Date(date + "T12:00:00").getTime()) / 86400000)) : null;
+export default function Home(){
+  const mapNode = useRef<HTMLDivElement>(null); const mapState = useRef<any>(null);
+  const [schools,setSchools]=useState<School[]>([]); const [visits,setVisits]=useState<Record<string,Visit>>({});
+  const [user,setUser]=useState<User|null>(null); const [query,setQuery]=useState(""); const [kind,setKind]=useState<Kind|"all">("all");
+  const [visitFilter,setVisitFilter]=useState<"all"|"pending"|"visited">("all"); const [selected,setSelected]=useState<School|null>(null);
+  const [draft,setDraft]=useState<Visit>({visited:false,lastVisitedAt:"",notes:""}); const [saving,setSaving]=useState(false); const [menu,setMenu]=useState(false);
 
-export default function Home() {
-  const [user, setUser] = useState<User | null>(null);
-  const [visits, setVisits] = useState<Record<string, Visit>>({});
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("Todos");
-  const [selected, setSelected] = useState<School | null>(null);
-  const [draft, setDraft] = useState<Visit>({ visited: false, lastVisitedAt: "", notes: "" });
-  const [saving, setSaving] = useState(false);
+  useEffect(()=>onAuthStateChanged(auth,setUser),[]);
+  useEffect(()=>{ fetch("/schools.csv").then(r=>r.text()).then(csv=>{ const parsed=Papa.parse<Record<string,string>>(csv,{header:true,skipEmptyLines:true,transformHeader:h=>h.trim().replace(/^\uFEFF/,"")}); const data=parsed.data.map((r,i)=>{const latitude=Number(r.latitude),longitude=Number(r.longitude); if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return null; const k=classify(r); const key=`${r.id||i}-${latitude.toFixed(5)}-${longitude.toFixed(5)}`.replace(/[^a-zA-Z0-9_-]/g,"_"); return {...r,key,latitude,longitude,kind:k,search:[r.name,r.address,r.city,r.zipcode,r.grades,r.type].join(" ").toLowerCase()} as School}).filter(Boolean) as School[]; setSchools(data)}) },[]);
+  useEffect(()=>{if(!user){setVisits({});return} return onSnapshot(collection(db,"users",user.uid,"schoolVisits"),s=>{const n:Record<string,Visit>={};s.forEach(d=>n[d.id]=d.data() as Visit);setVisits(n)})},[user]);
 
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
-  useEffect(() => {
-    if (!user) { setVisits({}); return; }
-    return onSnapshot(collection(db, "users", user.uid, "schoolVisits"), snap => {
-      const next: Record<string, Visit> = {}; snap.forEach(d => next[d.id] = d.data() as Visit); setVisits(next);
-    });
-  }, [user]);
+  const visible=useMemo(()=>schools.filter(s=>(kind==="all"||s.kind===kind)&&(!query||s.search.includes(query.toLowerCase()))&&(visitFilter==="all"||(visitFilter==="visited"?visits[s.key]?.visited:!visits[s.key]?.visited))),[schools,kind,query,visitFilter,visits]);
+  const open=(s:School)=>{setSelected(s);setDraft(visits[s.key]||{visited:false,lastVisitedAt:"",notes:""})};
 
-  const filtered = useMemo(() => schools.filter(s => {
-    const q = search.toLowerCase();
-    const matches = s.name.toLowerCase().includes(q) || s.city.toLowerCase().includes(q) || s.address.toLowerCase().includes(q);
-    const status = filter === "Todos" || (filter === "Visitados" && visits[s.id]?.visited) || (filter === "Pendientes" && !visits[s.id]?.visited) || filter === s.type;
-    return matches && status;
-  }), [search, filter, visits]);
+  useEffect(()=>{if(!mapNode.current||!schools.length)return; let cancelled=false; (async()=>{
+    const L=(await import("leaflet")).default; await import("leaflet.markercluster"); if(cancelled)return;
+    if(!mapState.current){const map=L.map(mapNode.current!,{zoomControl:false}).setView([25.7617,-80.35],10);L.control.zoom({position:"topright"}).addTo(map);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap contributors"}).addTo(map);mapState.current={map,cluster:(L as any).markerClusterGroup({showCoverageOnHover:false,maxClusterRadius:48}),L};map.addLayer(mapState.current.cluster)}
+    const {map,cluster}=mapState.current;cluster.clearLayers();
+    const labels={elementary:"E",middle:"M",high:"H",k8:"K",other:"S"};
+    visible.forEach(s=>{const done=visits[s.key]?.visited;const icon=L.divIcon({className:"",html:`<div class="school-marker ${s.kind} ${done?"visited":""}">${done?"✓":labels[s.kind]}</div>`,iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-15]}); const marker=L.marker([s.latitude,s.longitude],{icon,title:s.name});const days=ago(visits[s.key]?.lastVisitedAt);const address=`${s.address}, ${s.city}, ${s.state} ${s.zipcode}`;const popup=document.createElement("div");popup.className="popup";popup.innerHTML=`<span class="popup-type">${s.grades?`GRADES ${s.grades}`:s.type}</span><h3>${s.name}</h3><p>📍 ${address}</p>${s.phone?`<p>☎ <a href="tel:${s.phone}">${s.phone}</a></p>`:""}${done?`<p class="visit-line">✓ Visitado ${days===0?"hoy":`hace ${days} días`}</p>`:""}<div class="popup-actions"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}">Ruta ↗</a><button>${done?"Actualizar":"Registrar visita"}</button></div>`;popup.querySelector("button")?.addEventListener("click",()=>user?open(s):signInWithPopup(auth,new GoogleAuthProvider()));marker.bindPopup(popup);cluster.addLayer(marker)});
+  })();return()=>{cancelled=true}},[schools,visible,visits,user]);
 
-  const visitedCount = schools.filter(s => visits[s.id]?.visited).length;
-  const openSchool = (school: School) => { setSelected(school); setDraft(visits[school.id] || { visited:false, lastVisitedAt:"", notes:"" }); };
-  const save = async () => {
-    if (!selected || !user) return;
-    setSaving(true);
-    await setDoc(doc(db, "users", user.uid, "schoolVisits", selected.id), { ...draft, schoolName:selected.name, updatedAt:serverTimestamp() }, { merge:true });
-    setSaving(false); setSelected(null);
-  };
+  const locate=()=>navigator.geolocation?.getCurrentPosition(({coords})=>{const {map,L}=mapState.current||{};if(!map)return;L.circleMarker([coords.latitude,coords.longitude],{radius:9,weight:4,color:"#fff",fillColor:"#14261f",fillOpacity:1}).addTo(map).bindPopup("Tu ubicación").openPopup();map.setView([coords.latitude,coords.longitude],13)},()=>alert("No pudimos obtener tu ubicación. Revisa el permiso del navegador."),{enableHighAccuracy:true,timeout:10000});
+  const save=async()=>{if(!user||!selected)return;setSaving(true);await setDoc(doc(db,"users",user.uid,"schoolVisits",selected.key),{...draft,schoolName:selected.name,schoolId:selected.id,updatedAt:serverTimestamp()},{merge:true});setSaving(false);setSelected(null)};
+  const visited=schools.filter(s=>visits[s.key]?.visited).length;
 
-  return <main>
-    <header className="topbar">
-      <a className="brand" href="#top" aria-label="Miami Schools inicio"><span className="brandmark">MS</span><span>MIAMI <b>SCHOOLS</b></span></a>
-      <div className="account">
-        {user ? <><span className="userName">{user.displayName || user.email}</span><button className="button ghost" onClick={() => signOut(auth)}>Salir</button></> : <button className="button dark" onClick={() => signInWithPopup(auth, new GoogleAuthProvider())}>Continuar con Google</button>}
-      </div>
-    </header>
-
-    <section className="hero" id="top">
-      <div><p className="eyebrow">DIRECTORIO · MIAMI-DADE COUNTY</p><h1>Cada colegio.<br/><em>Cada visita.</em> Bajo control.</h1><p className="lede">Organiza tu recorrido por los colegios públicos de Miami, guarda notas y vuelve a contactar en el momento preciso.</p></div>
-      <div className="scorecard"><span>PROGRESO DE VISITAS</span><strong>{visitedCount}<small> / {schools.length}</small></strong><div className="progress"><i style={{width:`${visitedCount / schools.length * 100}%`}}/></div><p>{schools.length - visitedCount} colegios pendientes</p></div>
-    </section>
-
-    {!user && <section className="notice"><div><b>Tu seguimiento, privado y sincronizado.</b><span>Inicia sesión para marcar visitas, guardar fechas y escribir notas.</span></div><button className="button coral" onClick={() => signInWithPopup(auth, new GoogleAuthProvider())}>Activar seguimiento</button></section>}
-
-    <section className="toolbar">
-      <label className="search"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar colegio, ciudad o dirección..."/></label>
-      <div className="filters">{["Todos","Pendientes","Visitados","Elementary","K-8","Middle","High"].map(f=><button key={f} className={filter===f?"active":""} onClick={()=>setFilter(f)}>{f}</button>)}</div>
-    </section>
-
-    <section className="directory">
-      <div className="sectionhead"><div><p className="eyebrow">COLEGIOS</p><h2>Directorio de campo</h2></div><span>{filtered.length} resultados</span></div>
-      <div className="schoolgrid">{filtered.map((school, i) => {
-        const visit = visits[school.id]; const ago = daysAgo(visit?.lastVisitedAt);
-        return <article className="schoolcard" key={school.id}>
-          <div className="cardtop"><span className="index">{String(i+1).padStart(2,"0")}</span><span className={`status ${visit?.visited?"done":""}`}>{visit?.visited?"Visitado":"Pendiente"}</span></div>
-          <div><p className="type">{school.type} · {school.region}</p><h3>{school.name}</h3><p className="address">{school.address}</p></div>
-          {visit?.notes && <p className="note">“{visit.notes}”</p>}
-          <div className="cardfoot"><div>{visit?.visited?<><b>{ago === 0 ? "Hoy" : `Hace ${ago} días`}</b><small>{visit.lastVisitedAt}</small></>:<><b>Sin visitar</b><small>Agrega tu primera visita</small></>}</div><button onClick={()=>user ? openSchool(school) : signInWithPopup(auth,new GoogleAuthProvider())}>{visit?.visited?"Actualizar":"Registrar"} →</button></div>
-        </article>
-      })}</div>
-    </section>
-
-    {selected && <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="visit-title" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><form className="modal" onSubmit={e=>{e.preventDefault();save()}}>
-      <button type="button" className="close" onClick={()=>setSelected(null)} aria-label="Cerrar">×</button><p className="eyebrow">REGISTRO DE CAMPO</p><h2 id="visit-title">{selected.name}</h2><p className="modalAddress">{selected.address}</p>
-      <label className="check"><input type="checkbox" checked={draft.visited} onChange={e=>setDraft({...draft,visited:e.target.checked})}/><span>Este colegio ya fue visitado</span></label>
-      <label>Fecha de la visita<input type="date" value={draft.lastVisitedAt || ""} max={new Date().toISOString().slice(0,10)} onChange={e=>setDraft({...draft,lastVisitedAt:e.target.value,visited:Boolean(e.target.value)})}/></label>
-      <label>Notas y próximos pasos<textarea rows={5} value={draft.notes || ""} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="Ej. Hablar con la directora, enviar propuesta el viernes..."/></label>
-      <div className="modalActions"><button type="button" className="button ghost" onClick={()=>setSelected(null)}>Cancelar</button><button className="button coral" disabled={saving}>{saving?"Guardando...":"Guardar visita"}</button></div>
-    </form></div>}
-    <footer><span>MIAMI SCHOOLS · FIELD TRACKER</span><span>Datos de seguimiento privados por usuario</span></footer>
-  </main>;
+  return <main className="map-app">
+    <aside className={`map-sidebar ${menu?"open":""}`}>
+      <header className="brand-row"><span className="brandmark">MS</span><div><p className="eyebrow">MIAMI-DADE COUNTY</p><h1>Miami Schools</h1></div></header>
+      <p className="intro">Encuentra colegios públicos, planea tu ruta y registra cada visita.</p>
+      <div className="auth-row">{user?<><div className="signed"><b>{user.displayName||"Usuario"}</b><small>Seguimiento sincronizado</small></div><button className="text-btn" onClick={()=>signOut(auth)}>Salir</button></>:<button className="primary full" onClick={()=>signInWithPopup(auth,new GoogleAuthProvider())}>Continuar con Google</button>}</div>
+      <label className="field-label">Buscar colegios</label><div className="map-search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Nombre, dirección o ZIP…"/><button onClick={()=>setQuery("")}>×</button></div>
+      <div className="filter-title"><span>Tipo de colegio</span><button className="text-btn" onClick={()=>{setKind("all");setVisitFilter("all");setQuery("")}}>Limpiar</button></div>
+      <div className="filter-grid">{([['all','Todos'],['elementary','Elementary'],['middle','Middle'],['high','High'],['k8','K–8'],['other','Otros']] as const).map(([k,n])=><button key={k} className={kind===k?"active":""} onClick={()=>setKind(k)}>{n}</button>)}</div>
+      <div className="filter-title"><span>Estado de visita</span></div><div className="visit-tabs"><button className={visitFilter==="all"?"active":""} onClick={()=>setVisitFilter("all")}>Todos</button><button className={visitFilter==="pending"?"active":""} onClick={()=>setVisitFilter("pending")}>Pendientes</button><button className={visitFilter==="visited"?"active":""} onClick={()=>setVisitFilter("visited")}>Visitados</button></div>
+      <div className="stats"><div><strong>{visible.length}</strong><span>visibles</span></div><div><strong>{schools.length}</strong><span>cargados</span></div><div><strong>{visited}</strong><span>visitados</span></div></div>
+      <button className="primary full" onClick={locate}>◎ Colegios cerca de mí</button><p className="status">{visible.length?`${visible.length} colegios coinciden con tu búsqueda.`:"No hay colegios con esos filtros."}</p>
+      <footer>Directorio importado de MiamiSchoolsMap.<br/>Mapa © OpenStreetMap contributors.</footer>
+    </aside>
+    <section className="map-panel"><div ref={mapNode} id="map"/><button className="mobile-menu" onClick={()=>setMenu(!menu)}>☰ Filtros</button><div className="map-legend"><span><i className="elementary"/>Elementary</span><span><i className="middle"/>Middle</span><span><i className="high"/>High</span><span><i className="k8"/>K–8</span><span><i className="visited"/>Visitado</span></div></section>
+    {selected&&<div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><form className="modal" onSubmit={e=>{e.preventDefault();save()}}><button type="button" className="close" onClick={()=>setSelected(null)}>×</button><p className="eyebrow">REGISTRO DE CAMPO</p><h2>{selected.name}</h2><p className="modalAddress">{selected.address}, {selected.city}</p><label className="check"><input type="checkbox" checked={draft.visited} onChange={e=>setDraft({...draft,visited:e.target.checked})}/><span>Este colegio ya fue visitado</span></label><label>Fecha de la visita<input type="date" max={new Date().toISOString().slice(0,10)} value={draft.lastVisitedAt||""} onChange={e=>setDraft({...draft,lastVisitedAt:e.target.value,visited:Boolean(e.target.value)})}/></label><label>Notas y próximos pasos<textarea rows={5} value={draft.notes||""} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="Ej. Enviar propuesta, llamar a la directora..."/></label><div className="modalActions"><button type="button" className="secondary" onClick={()=>setSelected(null)}>Cancelar</button><button className="primary" disabled={saving}>{saving?"Guardando...":"Guardar visita"}</button></div></form></div>}
+  </main>
 }
