@@ -1,20 +1,39 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isApproved() {
-      return request.auth != null && request.auth.token.email.lower() in [
-        'rodrigo.bermudez@kellyeducation.com',
-        'angie.miller@kellyeducation.com',
-        'anthony.morales@kellyeducation.com'
-      ];
+    function signedIn() {
+      return request.auth != null;
+    }
+    function email() {
+      return request.auth.token.email.lower();
     }
     function isAdmin() {
-      return request.auth != null && request.auth.token.email.lower() == 'rodrigo.bermudez@kellyeducation.com';
+      return signedIn() && email() == 'rodrigo.bermudez@kellyeducation.com';
+    }
+    function assignedRole() {
+      return isAdmin() ? 'admin' :
+        (email() in ['angie.miller@kellyeducation.com', 'anthony.morales@kellyeducation.com'] ? 'management' :
+        (exists(/databases/$(database)/documents/teamMembers/$(email()))
+          ? get(/databases/$(database)/documents/teamMembers/$(email())).data.role
+          : 'none'));
+    }
+    function canAccessVisits() {
+      return signedIn() && assignedRole() in ['admin', 'management', 'in', 'recruiter', 'talent'];
+    }
+    function canAccessIncidents() {
+      return signedIn() && assignedRole() in ['admin', 'management', 'in'];
     }
     match /sharedVisits/{visitId} {
-      allow read: if isApproved();
-      allow create, update: if isApproved();
+      allow read, create, update: if canAccessVisits();
       allow delete: if isAdmin();
+    }
+    match /incidents/{incidentId} {
+      allow read, create, update: if canAccessIncidents();
+      allow delete: if isAdmin();
+    }
+    match /teamMembers/{memberEmail} {
+      allow read: if isAdmin() || (signedIn() && email() == memberEmail);
+      allow create, update, delete: if isAdmin();
     }
     match /users/{userId}/{document=**} {
       allow read: if isAdmin() && request.auth.uid == userId;
