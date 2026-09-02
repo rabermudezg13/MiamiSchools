@@ -1,4 +1,5 @@
 name: Deploy MiamiSchools to Firebase Hosting
+# Deployment trigger refreshed after Firebase service-account setup
 
 on:
   push:
