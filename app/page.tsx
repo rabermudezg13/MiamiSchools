@@ -11,7 +11,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 
 type Kind = "elementary" | "middle" | "high" | "k8" | "therapy" | "other";
 type School = { key:string; id:string; name:string; address:string; city:string; state:string; zipcode:string; phone:string; type:string; grades:string; latitude:number; longitude:number; kind:Kind; search:string };
-type Visit = { visited:boolean; lastVisitedAt?:string; notes?:string; sublocatorName?:string; sublocatorPhone?:string; sublocatorEmail?:string; sublocatorRating?:number; incident?:boolean; incidentNotes?:string };
+type Visit = { visited:boolean; lastVisitedAt?:string; notes?:string; visitedByName?:string; visitedByEmail?:string; sublocatorName?:string; sublocatorPhone?:string; sublocatorEmail?:string; sublocatorRating?:number; incident?:boolean; incidentNotes?:string };
 type Incident = { active:boolean; notes?:string; updatedBy?:string };
 type Role = "admin" | "management" | "in" | "recruiter" | "talent";
 type ActivityFilter = "all" | "yesterday" | "7days" | "month" | "notes" | "incidents";
@@ -26,6 +26,7 @@ const classify = (r:Record<string,string>):Kind => {
   return "other";
 };
 const ago = (date?:string) => date ? Math.max(0, Math.floor((Date.now()-new Date(`${date}T12:00:00`).getTime())/86400000)) : null;
+const accountName = (user:User) => user.displayName?.trim() || (user.email?.split("@")[0]||"Team member").split(/[._-]+/).filter(Boolean).map(part=>part.charAt(0).toUpperCase()+part.slice(1).toLowerCase()).join(" ");
 const ADMIN_EMAIL = "rodrigo.bermudez@kellyeducation.com";
 const USER_ROLES:Record<string,Role> = { [ADMIN_EMAIL]:"admin", "angie.miller@kellyeducation.com":"management", "anthony.morales@kellyeducation.com":"management" };
 
@@ -80,7 +81,7 @@ export default function Home(){
   useEffect(()=>{const timer=window.setTimeout(()=>mapState.current?.map?.invalidateSize(),250);return()=>window.clearTimeout(timer)},[sidebarHidden,menu]);
 
   const locate=()=>navigator.geolocation?.getCurrentPosition(({coords})=>{const {map,L}=mapState.current||{};if(!map)return;L.circleMarker([coords.latitude,coords.longitude],{radius:9,weight:4,color:"#fff",fillColor:"#14261f",fillOpacity:1}).addTo(map).bindPopup("Your location").openPopup();map.setView([coords.latitude,coords.longitude],13)},()=>alert("We could not get your location. Check your browser permission."),{enableHighAccuracy:true,timeout:10000});
-  const save=async()=>{if(!user||!role||!selected)return;setSaving(true);await setDoc(doc(db,"sharedVisits",selected.key),{visited:draft.visited,lastVisitedAt:draft.lastVisitedAt||"",notes:draft.notes||"",sublocatorName:draft.sublocatorName?.trim()||"",sublocatorPhone:draft.sublocatorPhone?.trim()||"",sublocatorEmail:draft.sublocatorEmail?.trim().toLowerCase()||"",sublocatorRating:Number(draft.sublocatorRating)||0,schoolName:selected.name,schoolId:selected.id,updatedBy:user.email,updatedAt:serverTimestamp()},{merge:true});if(canSeeIncidents)await setDoc(doc(db,"incidents",selected.key),{active:Boolean(draft.incident),notes:draft.incidentNotes||"",schoolName:selected.name,updatedBy:user.email,updatedAt:serverTimestamp()},{merge:true});setSaving(false);setSelected(null)};
+  const save=async()=>{if(!user||!role||!selected)return;setSaving(true);const existing=visits[selected.key];const isNewVisit=Boolean(draft.visited)&&(!existing?.visited||existing.lastVisitedAt!==draft.lastVisitedAt);const visitedByName=draft.visited?(isNewVisit?accountName(user):existing?.visitedByName||accountName(user)):"";const visitedByEmail=draft.visited?(isNewVisit?user.email||"":existing?.visitedByEmail||user.email||""):"";await setDoc(doc(db,"sharedVisits",selected.key),{visited:draft.visited,lastVisitedAt:draft.lastVisitedAt||"",notes:draft.notes||"",visitedByName,visitedByEmail,sublocatorName:draft.sublocatorName?.trim()||"",sublocatorPhone:draft.sublocatorPhone?.trim()||"",sublocatorEmail:draft.sublocatorEmail?.trim().toLowerCase()||"",sublocatorRating:Number(draft.sublocatorRating)||0,schoolName:selected.name,schoolId:selected.id,updatedBy:user.email,updatedAt:serverTimestamp()},{merge:true});if(canSeeIncidents)await setDoc(doc(db,"incidents",selected.key),{active:Boolean(draft.incident),notes:draft.incidentNotes||"",schoolName:selected.name,updatedBy:user.email,updatedAt:serverTimestamp()},{merge:true});setSaving(false);setSelected(null)};
   const removeVisit=async()=>{if(!user||user.email?.toLowerCase()!==ADMIN_EMAIL||!selected||!visits[selected.key])return;if(!window.confirm(`Delete the visit record for ${selected.name}? This will remove its date and notes.`))return;setSaving(true);await deleteDoc(doc(db,"sharedVisits",selected.key));setSaving(false);setSelected(null)};
   const assignRole=async()=>{const normalized=memberEmail.trim().toLowerCase();if(role!=="admin"||!normalized)return;await setDoc(doc(db,"teamMembers",normalized),{email:normalized,role:memberRole,updatedBy:user?.email,updatedAt:serverTimestamp()},{merge:true});setMemberEmail("");setRoleSaved(true);window.setTimeout(()=>setRoleSaved(false),2500)};
   const visited=schools.filter(s=>visits[s.key]?.visited).length;
