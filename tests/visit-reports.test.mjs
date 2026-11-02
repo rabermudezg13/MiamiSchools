@@ -22,6 +22,8 @@ test('PDF paginates long notes and excludes records without notes',async()=>{
  assert.ok(pdf.getNumberOfPages()>1);
  const data=pdf.output();
  assert.match(data,/Visit notes/);
+ assert.ok(data.includes(row.visit.sublocatorPhone));
+ assert.ok(data.includes(row.visit.sublocatorEmail));
  assert.match(data,/atenci/);
  assert.doesNotMatch(data,/SHOULD NOT APPEAR/);
  assert.ok(data.startsWith('%PDF-'));

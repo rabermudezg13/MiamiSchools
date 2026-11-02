@@ -46,7 +46,10 @@ export async function buildNotesPdf(rows:ReportRow[]) {
     if(y>240){pdf.addPage();y=20}
     write(school.name,14,true);write(`${school.address}, ${school.city}`,10);
     write(`Visit: ${v.lastVisitedAt||"Not recorded"} | By: ${v.visitedByName||v.visitedByEmail||v.visitedBy||"Not recorded"}`,10);
-    write(`Sublocator: ${v.sublocatorName||"Not recorded"}`,10);write(v.notes||"");y+=5;
+    write(`Sublocator: ${v.sublocatorName||"Not recorded"}`,10);
+    write(`Phone: ${v.sublocatorPhone||"Not recorded"}`,10);
+    write(`Email: ${v.sublocatorEmail||"Not recorded"}`,10);
+    write(v.notes||"");y+=5;
   }
   const count=pdf.getNumberOfPages();for(let i=1;i<=count;i++){pdf.setPage(i);pdf.setFontSize(9);pdf.text(`${i} / ${count}`,185,289,{align:"right"})}
   return pdf;
