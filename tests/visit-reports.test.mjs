@@ -39,3 +39,12 @@ test('Survey-only Excel excludes empty surveys, contact details, ratings and not
  const values=JSON.stringify(sheet.getSheetValues());
  assert.ok(!values.includes(row.visit.sublocatorEmail));assert.ok(!values.includes(row.visit.sublocatorPhone));assert.ok(!values.includes('Notas en'));
 });
+test('Custom answers are preserved in both survey and contact exports',async()=>{
+ const {buildSurveyWorkbook}=await import('../lib/visit-reports.ts');
+ const custom={...row,visit:{...row.visit,survey:{attendance:'other',attendanceOther:'Attendance varies by day',dressCode:'other',dressCodeOther:'Uniform clarification',callback:'other',callbackOther:'Email me instead',source:'sublocator_in_person'}}};
+ const sheet=(await buildSurveyWorkbook([custom])).getWorksheet('Survey results');
+ assert.equal(sheet.getCell('E2').value,'Other: Attendance varies by day');
+ assert.equal(sheet.getCell('F2').value,'Other: Uniform clarification');
+ assert.equal(sheet.getCell('G2').value,'Other: Email me instead');
+ assert.equal(contactRows([custom])[0][9],'Other: Email me instead');
+});

@@ -1,11 +1,11 @@
 // Exports use only saved, role-authorized shared visit data. Incident records are excluded.
 export type ReportRow = {
   school: { name:string; id:string; address:string; city:string };
-  visit: { lastVisitedAt?:string; visitedByName?:string; visitedByEmail?:string; visitedBy?:string; notes?:string; sublocatorName?:string; sublocatorPhone?:string; sublocatorEmail?:string; sublocatorRating?:number; survey?: { attendance:string; dressCode:string; callback:string; source:string; recordedBy?:string } };
+  visit: { lastVisitedAt?:string; visitedByName?:string; visitedByEmail?:string; visitedBy?:string; notes?:string; sublocatorName?:string; sublocatorPhone?:string; sublocatorEmail?:string; sublocatorRating?:number; survey?: { attendance:string; dressCode:string; callback:string; source:string; attendanceOther?:string; dressCodeOther?:string; callbackOther?:string; recordedBy?:string } };
 };
-const answer=(value?:string)=>({yes:"Yes",no:"No",district:"District",kelly:"Kelly",both:"Both"}[value||""]||"Not answered");
+const answer=(value?:string,other?:string)=>value==="other"?`Other: ${other?.trim()||"Not specified"}`:({yes:"Yes",no:"No",district:"District",kelly:"Kelly",both:"Both"}[value||""]||"Not answered");
 export function contactRows(rows:ReportRow[]) {
-  return rows.map(({school,visit:v})=>[school.name,school.id,v.lastVisitedAt||"",v.sublocatorName||"",v.sublocatorPhone||"",v.sublocatorEmail||"",v.sublocatorRating||"",answer(v.survey?.attendance),answer(v.survey?.dressCode),answer(v.survey?.callback),v.survey?(v.survey.source==="sublocator_in_person"?"Sublocator in person":"Staff entry - not confirmed by Sublocator"):"Not recorded",v.survey?.recordedBy||"",v.visitedByName||v.visitedByEmail||v.visitedBy||""]);
+  return rows.map(({school,visit:v})=>[school.name,school.id,v.lastVisitedAt||"",v.sublocatorName||"",v.sublocatorPhone||"",v.sublocatorEmail||"",v.sublocatorRating||"",answer(v.survey?.attendance,v.survey?.attendanceOther),answer(v.survey?.dressCode,v.survey?.dressCodeOther),answer(v.survey?.callback,v.survey?.callbackOther),v.survey?(v.survey.source==="sublocator_in_person"?"Sublocator in person":"Staff entry - not confirmed by Sublocator"):"Not recorded",v.survey?.recordedBy||"",v.visitedByName||v.visitedByEmail||v.visitedBy||""]);
 }
 const date=()=>new Date().toISOString().slice(0,10);
 export async function buildContactsWorkbook(rows:ReportRow[]) {
@@ -64,7 +64,7 @@ export async function buildSurveyWorkbook(rows:ReportRow[]) {
   sheet.columns=headers.map((header,i)=>({header,width:[40,16,16,28,24,24,24,48,38][i]}));
   for(const {school,visit:v} of rows){
     if(!v.survey||!(v.survey.attendance||v.survey.dressCode||v.survey.callback))continue;
-    sheet.addRow([school.name,school.id,v.lastVisitedAt||"",v.sublocatorName||"",answer(v.survey.attendance),answer(v.survey.dressCode),answer(v.survey.callback),v.survey.source==="sublocator_in_person"?"Sublocator in person":"Staff entry - not confirmed by Sublocator",v.survey.recordedBy||""]);
+    sheet.addRow([school.name,school.id,v.lastVisitedAt||"",v.sublocatorName||"",answer(v.survey.attendance,v.survey.attendanceOther),answer(v.survey.dressCode,v.survey.dressCodeOther),answer(v.survey.callback,v.survey.callbackOther),v.survey.source==="sublocator_in_person"?"Sublocator in person":"Staff entry - not confirmed by Sublocator",v.survey.recordedBy||""]);
   }
   sheet.autoFilter={from:"A1",to:"I1"};sheet.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};
   sheet.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF14261F"}};
