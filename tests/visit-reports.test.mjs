@@ -26,3 +26,16 @@ test('PDF paginates long notes and excludes records without notes',async()=>{
  assert.doesNotMatch(data,/SHOULD NOT APPEAR/);
  assert.ok(data.startsWith('%PDF-'));
 });
+test('Survey-only Excel excludes empty surveys, contact details, ratings and notes',async()=>{
+ const {buildSurveyWorkbook}=await import('../lib/visit-reports.ts');
+ const workbook=await buildSurveyWorkbook([row,{...row,visit:{}},{...row,visit:{survey:{attendance:'',dressCode:'',callback:'',source:'staff_report'}}},{...row,visit:{survey:{attendance:'no',dressCode:'',callback:'',source:'staff_report'}}}]);
+ const ExcelJS=(await import('exceljs')).default;
+ const loaded=new ExcelJS.Workbook();await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
+ const sheet=loaded.getWorksheet('Survey results');
+ assert.equal(sheet.rowCount,3);assert.equal(sheet.columnCount,9);
+ assert.equal(sheet.getCell('E2').value,'No');assert.equal(sheet.getCell('G2').value,'Both');
+ assert.equal(sheet.getCell('F3').value,'Not answered');
+ assert.equal(sheet.getCell('H3').value,'Staff entry - not confirmed by Sublocator');
+ const values=JSON.stringify(sheet.getSheetValues());
+ assert.ok(!values.includes(row.visit.sublocatorEmail));assert.ok(!values.includes(row.visit.sublocatorPhone));assert.ok(!values.includes('Notas en'));
+});

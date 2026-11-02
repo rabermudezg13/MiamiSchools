@@ -55,3 +55,25 @@ export async function exportNotes(rows:ReportRow[]) {
   const pdf=await buildNotesPdf(rows);
   pdf.save(`MiamiSchools-visit-notes-${date()}.pdf`);
 }
+
+export async function buildSurveyWorkbook(rows:ReportRow[]) {
+  const {default:ExcelJS}=await import("exceljs");
+  const workbook=new ExcelJS.Workbook();workbook.creator="MiamiSchools";workbook.created=new Date();
+  const sheet=workbook.addWorksheet("Survey results",{views:[{state:"frozen",ySplit:1}]});
+  const headers=["School","School ID","Visit date","Sublocator name","Attendance issues","Dress code issues","Call requested","Response source","Survey recorded by"];
+  sheet.columns=headers.map((header,i)=>({header,width:[40,16,16,28,24,24,24,48,38][i]}));
+  for(const {school,visit:v} of rows){
+    if(!v.survey||!(v.survey.attendance||v.survey.dressCode||v.survey.callback))continue;
+    sheet.addRow([school.name,school.id,v.lastVisitedAt||"",v.sublocatorName||"",answer(v.survey.attendance),answer(v.survey.dressCode),answer(v.survey.callback),v.survey.source==="sublocator_in_person"?"Sublocator in person":"Staff entry - not confirmed by Sublocator",v.survey.recordedBy||""]);
+  }
+  sheet.autoFilter={from:"A1",to:"I1"};sheet.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};
+  sheet.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF14261F"}};
+  sheet.getRow(1).height=32;sheet.eachRow(row=>{row.alignment={vertical:"top",wrapText:true}});
+  return workbook;
+}
+export async function exportSurvey(rows:ReportRow[]) {
+  const workbook=await buildSurveyWorkbook(rows);
+  const data=await workbook.xlsx.writeBuffer();
+  const url=URL.createObjectURL(new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  const link=document.createElement("a");link.href=url;link.download=`MiamiSchools-survey-results-${date()}.xlsx`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}

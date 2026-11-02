@@ -33,3 +33,6 @@
 .results-table table { border-collapse: collapse; min-width: 1000px; width: 100%; font-size: 12px; }
 .results-table th, .results-table td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
 .results-table th { background: #eef3ef; position: sticky; top: 0; }
+.survey-downloads { margin: 18px 0; padding: 18px; border: 1px solid #b8d0c3; background: #f1f7f3; border-radius: 10px; }
+.survey-downloads h3 { margin-top: 0; }
+.survey-downloads select { display: block; width: 100%; padding: 10px; margin-top: 6px; }
