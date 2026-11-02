@@ -20,3 +20,16 @@
 .leaflet-popup-content{width:min(340px,calc(100vw - 76px))!important;min-width:0}
 .popup-visit-notes{margin-top:10px;padding:9px 10px;background:#f1f3ee;border-left:3px solid #0f9fa8;overflow-wrap:anywhere}
 .popup-visit-notes p,.visit-owner-preview{overflow-wrap:anywhere}
+
+.draft-status { padding: 10px 12px; border-radius: 8px; background: #eef6ff; color: #173f65; font-size: 13px; }
+.sublocator-box select { width: 100%; min-height: 44px; border: 1px solid #ccd5df; border-radius: 8px; padding: 9px; background: white; color: #172b40; }
+.sublocator-box > p:not(.eyebrow) { font-size: 13px; line-height: 1.5; }
+.visit-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.draft-recovery { display: block; text-align: left; margin-top: 8px; }
+.results-button { margin-bottom: 10px; }
+.results-modal { width: min(1100px, 95vw); }
+.report-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.results-table { overflow: auto; max-height: 50vh; }
+.results-table table { border-collapse: collapse; min-width: 1000px; width: 100%; font-size: 12px; }
+.results-table th, .results-table td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
+.results-table th { background: #eef3ef; position: sticky; top: 0; }
